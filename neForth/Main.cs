@@ -21,6 +21,7 @@
 //  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 //
 using System;
+using System.Diagnostics;
 using System.Diagnostics.Contracts;
 using System.Collections.Generic;
 using System.Linq;
@@ -35,11 +36,28 @@ namespace neForth
         private readonly LinkedList<ParameterExpression> interm = new LinkedList<ParameterExpression>();
         private readonly LinkedList<Expression> outputs = new LinkedList<Expression>();
 
+
         private Expression[] PopFrame(params Type[] types)
         {
-            Contract.ForAll(outputs.Zip(types, Tuple.Create), x => x.Item2.IsEquivalentTo(x.Item1.Type));
-            Contract.Ensures(Contract.Result<Expression[]>().Length == types.Length);
-            Contract.EndContractBlock();
+            /*
+            Contract.Requires(
+                    Contract.ForAll(outputs.Zip(types, Tuple.Create),
+                                x => x.Item2.IsEquivalentTo(x.Item1.Type))
+            );
+            Contract.Ensures(
+                Contract.Result<Expression[]>().Length == types.Length);
+            Contract.Ensures(
+                Contract.Result<Expression[]>()
+                    .Zip(types, Tuple.Create, (e, t) => t.IsEquivalentTo(e.Type))
+                    .All());
+            */
+            Debug.Assert(types != null);
+
+            Debug.Assert(
+                outputs
+                .Zip(types, (e, t) => t.IsAssignableFrom(e.Type))
+                .All(x => x)
+            );
 
             var frame = new Expression[types.Length];
             int i = 0;
@@ -50,10 +68,11 @@ namespace neForth
                 var type = types[i];
 
                 // TODO: more sophisticated compile-time checks
-                if ((arg.Type.IsValueType || type.IsValueType) && type != arg.Type)
+                if (type != arg.Type && (type.IsValueType || arg.Type.IsValueType))
                 {
                     arg = Expression.Convert(arg, type);
                 }
+
                 frame[i] = arg;
                 outputs.RemoveFirst();
             }
@@ -66,18 +85,28 @@ namespace neForth
                 frame[i++] = param;
             }
 
+            Debug.Assert(
+                frame
+                .Zip(types, (e, t) => t.IsEquivalentTo(e.Type))
+                .All(x => x)
+            );
+
             return frame;
         }
 
 
         public void Lit<T>(T value)
         {
+            //Contract.Ensures(outputs == Contract.OldValue(outputs.Count) + 1);
+            //Contract.Ensures(outputs.First.Value.Type == typeof(T));
+
             outputs.AddFirst(Expression.Constant(value, typeof(T)));
         }
 
         public void Compile<T>(Expression<Action<T>> action)
         {
             Contract.Requires(action != null);
+            //Contract.Requires(typeof(T).IsEquivalentTo(outputs.First.Value.Type));
 
             words.AddLast(Expression.Invoke(action, PopFrame(typeof(T))));
         }
@@ -85,6 +114,8 @@ namespace neForth
         public void Compile<TA,TB,TC>(Expression<Func<TA,TB,TC>> func)
         {
             Contract.Requires(func != null);
+            //Contract.Ensures(outputs.First.Value.Type == typeof(TC));
+            //Contract.Ensures(Contract.ValueAtReturn(out outputs.First).Value.Type == typeof(TC));
 
             var args = PopFrame(typeof(TA), typeof(TB));
 
@@ -97,9 +128,10 @@ namespace neForth
 
         public Expression<TDelegate> ComposeLambda<TDelegate>()
         {
-            Contract.Ensures(Contract.Result<TDelegate>() != null);
+            //Contract.Ensures(Contract.Result<object>() != null);
 
             Console.WriteLine(string.Join("\n",words.Select(x => x.ToString())));
+
             var body = Expression.Block(interm, words).Reduce();
 
             // TODO: resolve outputs
