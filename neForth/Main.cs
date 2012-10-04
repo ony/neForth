@@ -25,7 +25,9 @@ using System.Diagnostics;
 using System.Diagnostics.Contracts;
 using System.Collections.Generic;
 using System.Linq;
+
 using System.Linq.Expressions;
+using System.Reflection;
 
 namespace neForth
 {
@@ -64,7 +66,10 @@ namespace neForth
 
             for (; i < types.Length; ++i)
             {
-                var arg = outputs.First.Value;
+                var argNode = outputs.First;
+                if (argNode == null) break;
+
+                var arg = argNode.Value;
                 var type = types[i];
 
                 // TODO: more sophisticated compile-time checks
@@ -126,6 +131,32 @@ namespace neForth
             outputs.AddFirst(result);
         }
 
+        public void Compile(MethodInfo info)
+        {
+            Contract.Requires(info != null);
+
+            Debug.Assert(info.IsStatic);
+            Debug.Assert(!info.IsGenericMethod); // TODO
+
+            var types = info.GetParameters().Select(i => i.ParameterType).ToArray();
+            var args = PopFrame(types);
+
+            var returnType = info.ReturnType;
+
+            Expression call = Expression.Call(info, args);
+
+            if (returnType != typeof(void))
+            {
+                var result = Expression.Variable(returnType, "o" + interm.Count);
+                interm.AddLast(result);
+                call = Expression.Assign(result, call);
+
+                outputs.AddFirst(result);
+            }
+
+            words.AddLast(call);
+        }
+
         public Expression<TDelegate> ComposeLambda<TDelegate>()
         {
             //Contract.Ensures(Contract.Result<object>() != null);
@@ -141,15 +172,23 @@ namespace neForth
 
     class MainClass
     {
+        public static int Sum(int a, int b) { return a+b; }
         public static void Main(string[] args)
         {
+            var wl = typeof(Console)
+                .GetMethod("WriteLine", new [] { typeof(object) });
+
+            var sum = typeof(MainClass)
+                .GetMethod("Sum", new [] { typeof(int), typeof(int) });
+
             Compiler t = new Compiler();
             t.Lit("Hello World");
             t.Lit(2);
             t.Lit(3);
-            t.Compile((int x, int y) => x+y);
-            t.Compile((object x) => Console.WriteLine(x));
-            t.Compile((object x) => Console.WriteLine(x));
+            //t.Compile((int x, int y) => x+y);
+            t.Compile(sum);
+            t.Compile(wl);
+            t.Compile(wl);
             t.ComposeLambda<Action>().Compile()();
         }
     }
